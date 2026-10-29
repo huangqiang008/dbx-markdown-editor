@@ -1,0 +1,21 @@
+# 构建输出（候选包通过 GitHub Release 发布，不入库）
+dist/
+.e2e-tmp/
+*.dbxp
+.artifact.json
+release-candidates.json
+
+# 商店元数据与开发宿主
+.dbx-store.json
+.dbx-dev/
+
+# 本地记忆
+.workbuddy/
+
+# 上游参考源码（MIT, ZZF/Typedown），见 README
+Typedown-main/
+
+# 依赖与构建产物
+node_modules/
+bin/
+backend/*.exe

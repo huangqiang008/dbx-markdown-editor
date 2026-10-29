@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Markdown">
+  <rect width="96" height="96" rx="22" fill="#172554"/>
+  <path d="M24 12h34l16 16v56H24z" fill="#fff"/>
+  <path d="M58 12v16h16" fill="#bfdbfe"/>
+  <path d="M58 12l16 16H58z" fill="#60a5fa"/>
+  <path d="M34 38v18M46 38v18M34 47h12" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+  <path d="M34 66h28M34 74h20" fill="none" stroke="#64748b" stroke-width="4" stroke-linecap="round"/>
+</svg>

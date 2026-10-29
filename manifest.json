@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/t8y2/dbx/main/plugins/manifest.schema.json",
+  "manifest_version": 1,
+  "id": "com.huangqiang.mdeditor",
+  "name": "Markdown",
+  "version": "1.0.0",
+  "publisher": "huangqiang",
+  "description": "A WYSIWYG Markdown editor for local files, powered by Typedown and Muya.",
+  "icon": "assets/plugin.svg",
+  "source": "https://github.com/huangqiang008/dbx-markdown-editor",
+  "homepage": "https://github.com/huangqiang008/dbx-markdown-editor",
+  "engines": { "dbx": ">=0.6.0", "host_api": "1" },
+  "permissions": ["host.workbench", "host.storage"],
+  "entrypoints": {
+    "ui": { "root": "ui/typedown", "entry": "ui/typedown/index.html" },
+    "backend": {
+      "protocol_versions": [1],
+      "transport": "stdio-jsonl",
+      "executable": "bin/windows-x64/backend.exe"
+    }
+  },
+  "contributions": [
+    {
+      "type": "workbench",
+      "id": "com.huangqiang.mdeditor.main",
+      "label": "Markdown",
+      "icon": "assets/plugin.svg"
+    }
+  ],
+  "localizations": {
+    "zh-CN": {
+      "name": "Markdown 编辑器",
+      "contributions": {
+        "com.huangqiang.mdeditor.main": { "label": "Markdown 编辑器" }
+      }
+    }
+  }
+}

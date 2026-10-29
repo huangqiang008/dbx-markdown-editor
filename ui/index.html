@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Markdown</title>
+  <script>
+    // 启动诊断探针（head  earliest）：宿主沙箱里某些脚本可能加载/执行失败，
+    // 这里第一时间捕获错误与资源失败，供尾部探针与 main.js 生成诊断横幅。
+    // 注意：本文件会被宿主整体内联，探针源码不得出现裸 script 闭合序列。
+    (function () {
+      var q = [];
+      window.__bootErrors = q;
+      window.addEventListener("error", function (e) {
+        var el = e && e.target;
+        if (el && (el.tagName === "SCRIPT" || el.tagName === "LINK" || el.tagName === "IMG")) {
+          q.push("resource failed: " + (el.src || el.href || "?"));
+        } else if (e && e.message) {
+          q.push(String(e.message).slice(0, 200) + " @ " + (e.filename || "?") + ":" + (e.lineno || 0));
+        }
+      }, true);
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="vendor/katex.min.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Markdown">
+          <rect width="96" height="96" rx="22" fill="#172554"/>
+          <path d="M24 12h34l16 16v56H24z" fill="#fff"/>
+          <path d="M58 12v16h16" fill="#bfdbfe"/>
+          <path d="M58 12l16 16H58z" fill="#60a5fa"/>
+          <path d="M34 38v18M46 38v18M34 47h12" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+          <path d="M34 66h28M34 74h20" fill="none" stroke="#64748b" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+        <div class="brand-text">
+          <h1 data-i18n="app.title">Markdown 编辑器</h1>
+          <p class="subtitle" data-i18n="app.subtitle">所见即所得 · 本地文件</p>
+        </div>
+      </div>
+
+      <div class="doc-title" id="doc-title">
+        <span class="dirty-dot" id="dirty-dot" title=""></span>
+        <span class="doc-name" id="doc-name">untitled.md</span>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="btn-new" class="btn btn-ghost btn-icon" data-i18n-title="action.new"></button>
+        <button id="btn-open" class="btn btn-ghost btn-icon" data-i18n-title="action.open"></button>
+        <button id="btn-save" class="btn btn-ghost btn-icon" data-i18n-title="action.save"></button>
+        <button id="btn-export" class="btn btn-ghost btn-icon" data-i18n-title="action.export"></button>
+        <span class="tb-sep"></span>
+        <button id="btn-sidebar" class="btn btn-ghost btn-icon toggle active" data-i18n-title="action.sidebar"></button>
+        <button id="btn-source" class="btn btn-ghost btn-icon toggle" data-i18n-title="action.source"></button>
+        <button id="btn-typewriter" class="btn btn-ghost btn-icon toggle" data-i18n-title="action.typewriter"></button>
+        <button id="btn-help" class="btn btn-ghost btn-icon" data-i18n-title="action.help"></button>
+      </div>
+    </header>
+
+    <div class="toolbar" id="toolbar">
+      <button class="tb-btn" data-cmd="bold" data-i18n-title="toolbar.bold"></button>
+      <button class="tb-btn" data-cmd="italic" data-i18n-title="toolbar.italic"></button>
+      <button class="tb-btn" data-cmd="strike" data-i18n-title="toolbar.strike"></button>
+      <button class="tb-btn" data-cmd="code" data-i18n-title="toolbar.code"></button>
+      <span class="tb-sep"></span>
+      <select id="sel-heading" class="tb-select" data-i18n-title="toolbar.heading">
+        <option value="p" data-i18n="toolbar.paragraph">正文</option>
+        <option value="h1">H1</option>
+        <option value="h2">H2</option>
+        <option value="h3">H3</option>
+      </select>
+      <span class="tb-sep"></span>
+      <div class="tb-menu" id="tb-menu-paragraph">
+        <button type="button" class="tb-btn tb-menu-btn" id="btn-menu-paragraph" data-i18n-title="menu.paragraph">
+          <span data-i18n="menu.paragraph">段落</span>
+        </button>
+        <div class="tb-dropdown" id="dropdown-paragraph" role="menu">
+          <div class="dd-sub">
+            <div class="dd-item dd-sub-trigger"><span data-i18n="menu.heading">标题</span><i class="dd-arrow"></i></div>
+            <div class="dd-submenu">
+              <button type="button" class="dd-item" data-cmd="p"><span data-i18n="toolbar.paragraph">正文</span><kbd>Ctrl+0</kbd></button>
+              <button type="button" class="dd-item" data-cmd="h1"><span>H1</span><kbd>Ctrl+1</kbd></button>
+              <button type="button" class="dd-item" data-cmd="h2"><span>H2</span><kbd>Ctrl+2</kbd></button>
+              <button type="button" class="dd-item" data-cmd="h3"><span>H3</span><kbd>Ctrl+3</kbd></button>
+              <button type="button" class="dd-item" data-cmd="h4"><span>H4</span><kbd>Ctrl+4</kbd></button>
+              <button type="button" class="dd-item" data-cmd="h5"><span>H5</span><kbd>Ctrl+5</kbd></button>
+              <button type="button" class="dd-item" data-cmd="h6"><span>H6</span><kbd>Ctrl+6</kbd></button>
+            </div>
+          </div>
+          <button type="button" class="dd-item" data-cmd="promote"><span data-i18n="menu.promote">提升标题级别</span><kbd>Ctrl+=</kbd></button>
+          <button type="button" class="dd-item" data-cmd="demote"><span data-i18n="menu.demote">降低标题级别</span><kbd>Ctrl+-</kbd></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="table"><span data-i18n="menu.table">表格</span><kbd>Ctrl+Shift+T</kbd></button>
+          <button type="button" class="dd-item" data-cmd="codeblock"><span data-i18n="toolbar.codeblock">代码块</span><kbd>Ctrl+Shift+K</kbd></button>
+          <button type="button" class="dd-item" data-cmd="math"><span data-i18n="menu.math">公式块</span><kbd>Ctrl+Shift+M</kbd></button>
+          <button type="button" class="dd-item" data-cmd="quote"><span data-i18n="menu.quote">引用</span><kbd>Ctrl+Shift+Q</kbd></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="ol"><span data-i18n="toolbar.ol">有序列表</span><kbd>Ctrl+Shift+[</kbd></button>
+          <button type="button" class="dd-item" data-cmd="ul"><span data-i18n="toolbar.ul">无序列表</span><kbd>Ctrl+Shift+]</kbd></button>
+          <button type="button" class="dd-item" data-cmd="task"><span data-i18n="toolbar.task">任务列表</span><kbd>Ctrl+Shift+9</kbd></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="insertAbove"><span data-i18n="menu.insertAbove">在上方插入段落</span><kbd>Ctrl+Shift+Enter</kbd></button>
+          <button type="button" class="dd-item" data-cmd="insertBelow"><span data-i18n="menu.insertBelow">在下方插入段落</span><kbd>Ctrl+Enter</kbd></button>
+          <div class="dd-sep"></div>
+          <div class="dd-sub">
+            <div class="dd-item dd-sub-trigger"><span data-i18n="menu.chart">图表</span><i class="dd-arrow"></i></div>
+            <div class="dd-submenu">
+              <button type="button" class="dd-item" data-cmd="chart" data-preset="flow"><span data-i18n="menu.chart.flow">流程图</span></button>
+              <button type="button" class="dd-item" data-cmd="chart" data-preset="sequence"><span data-i18n="menu.chart.sequence">时序图</span></button>
+              <button type="button" class="dd-item" data-cmd="chart" data-preset="pie"><span data-i18n="menu.chart.pie">饼图</span></button>
+              <button type="button" class="dd-item" data-cmd="chart" data-preset="gantt"><span data-i18n="menu.chart.gantt">甘特图</span></button>
+              <button type="button" class="dd-item" data-cmd="chart" data-preset="class"><span data-i18n="menu.chart.class">类图</span></button>
+              <button type="button" class="dd-item" data-cmd="chart" data-preset="state"><span data-i18n="menu.chart.state">状态图</span></button>
+            </div>
+          </div>
+          <button type="button" class="dd-item" data-cmd="footnote"><span data-i18n="menu.footnote">脚注</span></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="hr"><span data-i18n="toolbar.hr">水平分割线</span></button>
+          <button type="button" class="dd-item" data-cmd="frontmatter"><span data-i18n="menu.frontmatter">YAML Front Matter</span></button>
+        </div>
+      </div>
+      <div class="tb-menu" id="tb-menu-format">
+        <button type="button" class="tb-btn tb-menu-btn" id="btn-menu-format" data-i18n-title="menu.format">
+          <span data-i18n="menu.format">格式</span>
+        </button>
+        <div class="tb-dropdown" id="dropdown-format" role="menu">
+          <button type="button" class="dd-item" data-cmd="bold"><span data-i18n="toolbar.bold">加粗</span><kbd>Ctrl+B</kbd></button>
+          <button type="button" class="dd-item" data-cmd="italic"><span data-i18n="toolbar.italic">斜体</span><kbd>Ctrl+I</kbd></button>
+          <button type="button" class="dd-item" data-cmd="underline"><span data-i18n="menu.underline">下划线</span><kbd>Ctrl+U</kbd></button>
+          <button type="button" class="dd-item" data-cmd="code"><span data-i18n="toolbar.code">行内代码</span><kbd>Ctrl+Shift+`</kbd></button>
+          <button type="button" class="dd-item" data-cmd="inlinemath"><span data-i18n="menu.inlinemath">内联公式</span></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="strike"><span data-i18n="toolbar.strike">删除线</span><kbd>Alt+Shift+5</kbd></button>
+          <button type="button" class="dd-item" data-cmd="highlight"><span data-i18n="menu.highlight">高亮</span><kbd>Ctrl+Shift+H</kbd></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="link"><span data-i18n="toolbar.link">超链接</span><kbd>Ctrl+K</kbd></button>
+          <button type="button" class="dd-item" data-cmd="image"><span data-i18n="toolbar.image">图像</span><kbd>Ctrl+Shift+I</kbd></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="clear"><span data-i18n="menu.clearFormat">清除样式</span><kbd>Ctrl+\</kbd></button>
+        </div>
+      </div>
+      <div class="tb-menu" id="tb-menu-view">
+        <button type="button" class="tb-btn tb-menu-btn" id="btn-menu-view" data-i18n-title="menu.view">
+          <span data-i18n="menu.view">查看</span>
+        </button>
+        <div class="tb-dropdown" id="dropdown-view" role="menu">
+          <button type="button" class="dd-item" data-cmd="source"><span data-i18n="action.source">源码模式</span><kbd>Ctrl+/</kbd></button>
+          <button type="button" class="dd-item" data-cmd="sidebar"><span data-i18n="action.sidebar">侧栏</span></button>
+          <button type="button" class="dd-item" data-cmd="typewriter"><span data-i18n="action.typewriter">打字机模式</span></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="outline"><span data-i18n="outline.title">大纲</span></button>
+          <button type="button" class="dd-item" data-cmd="export"><span data-i18n="action.export">导出</span><kbd>Ctrl+E</kbd></button>
+          <div class="dd-sep"></div>
+          <button type="button" class="dd-item" data-cmd="help"><span data-i18n="action.help">使用帮助</span></button>
+        </div>
+      </div>
+      <span class="tb-sep"></span>
+      <button class="tb-btn" data-cmd="ul" data-i18n-title="toolbar.ul"></button>
+      <button class="tb-btn" data-cmd="ol" data-i18n-title="toolbar.ol"></button>
+      <button class="tb-btn" data-cmd="task" data-i18n-title="toolbar.task"></button>
+      <button class="tb-btn" data-cmd="quote" data-i18n-title="toolbar.quote"></button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn" data-cmd="link" data-i18n-title="toolbar.link"></button>
+      <button class="tb-btn" data-cmd="image" data-i18n-title="toolbar.image"></button>
+      <button class="tb-btn" data-cmd="codeblock" data-i18n-title="toolbar.codeblock"></button>
+      <button class="tb-btn" data-cmd="table" data-i18n-title="toolbar.table"></button>
+      <button class="tb-btn" data-cmd="hr" data-i18n-title="toolbar.hr"></button>
+    </div>
+
+    <div class="body">
+      <aside class="sidebar" id="sidebar">
+        <div class="side-tabs">
+          <button class="side-tab active" data-tab="files" data-i18n="files.title">文件</button>
+          <button class="side-tab" data-tab="outline" data-i18n="outline.title">大纲</button>
+        </div>
+
+        <div class="side-pane" id="pane-files">
+          <div class="files-actions">
+            <button id="btn-open-dir" class="btn btn-primary btn-sm" data-i18n="files.openFolder">打开文件夹</button>
+          </div>
+          <p class="files-hint" data-i18n="files.openFolderHint"></p>
+          <div class="files-path-row">
+            <input id="inp-dir" type="text" data-i18n-placeholder="files.pathPlaceholder" autocomplete="off" spellcheck="false">
+            <button id="btn-dir-go" class="btn btn-ghost btn-sm" data-i18n="files.browse">浏览</button>
+          </div>
+          <div class="files-tree" id="files-tree"></div>
+          <div class="recent">
+            <div class="recent-head">
+              <span data-i18n="files.recent">最近文件</span>
+              <button id="btn-clear-recent" class="btn btn-ghost btn-tiny" data-i18n="files.clearRecent">清空</button>
+            </div>
+            <div class="recent-list" id="recent-list"></div>
+          </div>
+        </div>
+
+        <div class="side-pane hidden" id="pane-outline">
+          <div class="outline-list" id="outline-list"></div>
+        </div>
+
+        <div class="side-pane hidden" id="pane-picker">
+          <div class="picker-head">
+            <button id="picker-up" type="button" class="btn btn-ghost btn-tiny" data-i18n-title="picker.up" data-i18n="picker.up">上级</button>
+            <div class="picker-crumb" id="picker-crumb"></div>
+          </div>
+          <div class="picker-list" id="picker-list" role="listbox"></div>
+          <p class="picker-empty hidden" id="picker-empty" data-i18n="picker.empty"></p>
+          <div class="picker-foot">
+            <input id="picker-name" type="text" class="hidden" autocomplete="off" spellcheck="false">
+            <div class="picker-btns">
+              <button id="picker-cancel" type="button" class="btn btn-ghost btn-sm" data-i18n="picker.cancel">取消</button>
+              <button id="picker-ok" type="button" class="btn btn-primary btn-sm" data-i18n="picker.ok">打开</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="editor-wrap" id="editor-wrap">
+          <div class="editor" id="editor" contenteditable="true" spellcheck="false" autocapitalize="off" autocomplete="off"></div>
+          <textarea class="source-mode hidden" id="source" spellcheck="false" autocapitalize="off" wrap="off"></textarea>
+        </div>
+      </main>
+    </div>
+
+    <footer class="statusbar">
+      <div class="status-left">
+        <span class="dirty-dot" id="dirty-dot-2"></span>
+        <span class="status-file" id="status-file">untitled.md</span>
+        <span class="status-ext hidden" id="status-ext" data-i18n="status.external"></span>
+      </div>
+      <div class="status-right">
+        <span class="status-counts" id="status-counts"></span>
+        <button id="btn-autosave" class="btn btn-ghost btn-tiny toggle" data-i18n-title="status.autosave">
+          <span data-i18n="status.autosave">自动保存</span>
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <div class="overlay hidden" id="overlay">
+    <div class="dialog" role="dialog" aria-modal="true">
+      <header class="dialog-head">
+        <h2 id="dlg-title"></h2>
+        <button id="dlg-close" class="btn btn-ghost btn-tiny" aria-label="close">×</button>
+      </header>
+      <div class="dialog-body" id="dlg-body"></div>
+      <footer class="dialog-foot" id="dlg-foot"></footer>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="vendor/katex.min.js"></script>
+  <script src="vendor/mermaid.min.js"></script>
+  <script src="icons.js"></script>
+  <script src="i18n.js"></script>
+  <script src="md.js"></script>
+  <script src="main.js"></script>
+  <script>
+    // 启动诊断探针（尾部）：外链脚本应已全部执行。若核心模块缺失，
+    // 生成红色诊断横幅，把缺失项与前面捕获的错误直接显示给用户/截图。
+    (function () {
+      function isObj(v) { return v && typeof v === "object"; }
+      var miss = [];
+      if (!isObj(window.axMd)) miss.push("axMd(md.js)");
+      if (!isObj(window.axI18n)) miss.push("axI18n(i18n.js)");
+      if (!isObj(window.axIcons)) miss.push("axIcons(icons.js)");
+      if (!miss.length) return;
+      var old = document.querySelector("[data-boot-error]");
+      if (old) old.remove();
+      var d = document.createElement("div");
+      d.setAttribute("data-boot-error", "1");
+      d.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;z-index:2147483647;max-height:45%;overflow:auto;background:#7f1d1d;color:#fff;font:12px/1.6 monospace;padding:10px 12px;border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,.4)";
+      var errs = window.__bootErrors || [];
+      d.textContent = "插件启动诊断：模块未加载 [" + miss.join(", ") + "]\n" +
+        (errs.length ? "捕获到 " + errs.length + " 个错误：\n- " + errs.slice(0, 10).join("\n- ")
+          : "未捕获到错误（可能脚本被宿主沙箱拦截，未能开始执行）");
+      document.body.appendChild(d);
+    })();
+  </script>
+</body>
+</html>

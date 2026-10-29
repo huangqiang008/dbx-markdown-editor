@@ -1,0 +1,74 @@
+Third-Party Notices
+===================
+
+The Markdown editor includes and redistributes the third-party components and
+fonts listed below. Their license texts are included in the adjacent licenses
+directory in the packaged plugin. These notices do not change the license of
+the project’s own code.
+
+MIT-licensed components
+-----------------------
+
+Typedown / Muya: Copyright (c) 2022 ZZF.
+KaTeX: Copyright (c) 2013-2020 Khan Academy and other contributors.
+Mermaid: Copyright (c) 2014-2021 Knut Sveidqvist.
+React: Copyright (c) Facebook, Inc. and its affiliates.
+CodeMirror: Copyright (C) 2017 Marijn Haverbeke and others.
+MarkText file icons: Copyright (c) 2021 Mark Text.
+Atom file-icons: Copyright (c) 2014-2016 Daniel Brooker; 2016-2022 John Gardner.
+Marked: Copyright (c) 2011-2018 Christopher Jeffrey.
+
+See licenses/Typedown-MIT.txt, licenses/KaTeX-MIT.txt,
+licenses/Mermaid-MIT.txt, licenses/React-MIT.txt, and
+licenses/CodeMirror-MIT.txt, licenses/MarkText-File-Icons-MIT.txt,
+licenses/Atom-File-Icons-MIT.txt, and licenses/Marked-MIT.txt.
+
+Apache-2.0-licensed fonts and components
+----------------------------------------
+
+Open Sans font files are distributed under the Apache License, Version 2.0.
+Snap.svg is also distributed under the Apache License, Version 2.0.
+See licenses/Open-Sans-Apache-2.0.txt and licenses/SnapSVG-Apache-2.0.txt.
+
+KaTeX fonts
+-----------
+
+The KaTeX font files (KaTeX_*.woff2, e.g. in vendor/fonts/) and the fonts
+inlined into the built stylesheet carry the notices:
+
+  Copyright (c) 2009-2010 Design Science, Inc.
+  Copyright (c) 2014-2018 Khan Academy
+
+They are based on the MathJax TeX web fonts (Apache License, Version 2.0,
+see licenses/KaTeX-Fonts-Apache-2.0.txt) and are distributed as part of the
+MIT-licensed KaTeX package (see licenses/KaTeX-MIT.txt). Retain both
+attribution notices when redistributing.
+
+Other bundled fonts and components
+---------------------------------
+
+DejaVu Sans Mono font files: see licenses/DejaVuSansMono-License.txt.
+
+Daniel / danielbd font: Copyright (c) Daniel Midgley. The font may be used for
+any purpose, including commercial use, and shared provided this notice is
+included. Modified copies may not be distributed. See
+licenses/Daniel-Font.txt.
+
+js-sequence-diagrams: Copyright (c) 2012-2017 Andrew Brampton.
+See licenses/js-sequence-diagrams-BSD.txt.
+
+Icon fonts embedded via the MIT-licensed file-icons / @marktext/file-icons
+packages keep the licenses of their original projects:
+
+  Font Awesome 4.x: font under the SIL Open Font License 1.1 (icon designs
+    under Creative Commons attribution); see licenses/SIL-OFL-1.1.txt.
+  Octicons (GitHub): MIT License.
+  Devicons (Vorillaz): MIT License.
+  Mfizz (MFizz Inc, Joe Lauer): MIT License.
+  file-icons font itself: MIT per licenses/Atom-File-Icons-MIT.txt.
+
+Go standard library/runtime: Copyright 2009 The Go Authors.
+See licenses/Go-Authors-BSD.txt.
+
+The generated frontend bundle also includes its own dependency notices in
+static/js/*.LICENSE.txt.
