@@ -5,8 +5,7 @@ dist/
 .artifact.json
 release-candidates.json
 
-# 商店元数据与开发宿主
-.dbx-store.json
+# 本地 DBX 开发宿主（不入库）
 .dbx-dev/
 
 # 本地记忆
