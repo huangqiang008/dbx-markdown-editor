@@ -67,7 +67,8 @@ packages keep the licenses of their original projects:
   Mfizz (MFizz Inc, Joe Lauer): MIT License.
   file-icons font itself: MIT per licenses/Atom-File-Icons-MIT.txt.
 
-Go standard library/runtime: Copyright 2009 The Go Authors.
+Go standard library/runtime and golang.org/x/image: Copyright 2009 The Go
+Authors. golang.org/x/image is distributed under the BSD 3-Clause License.
 See licenses/Go-Authors-BSD.txt.
 
 The generated frontend bundle also includes its own dependency notices in

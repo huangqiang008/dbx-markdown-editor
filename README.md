@@ -74,4 +74,4 @@ dbx-plugin package .
 
 ## 许可证
 
-本项目自有代码按 MIT 许可证发布，见仓库根目录的 `LICENSE`。Typedown/Muya 与其他第三方代码、字体和资源各自适用其原许可证；打包插件中的 `ui/typedown/PROJECT-LICENSE.txt` 是本项目许可证副本，`ui/typedown/THIRD-PARTY-NOTICES.txt` 和 `ui/typedown/licenses/` 附有第三方声明与许可证文本。
+本项目自有代码按 MIT 许可证发布，见仓库根目录的 `LICENSE`。Typedown/Muya、Go 的 `golang.org/x/image` 与其他第三方代码、字体和资源各自适用其原许可证；打包插件中的 `ui/typedown/PROJECT-LICENSE.txt` 是本项目许可证副本，`ui/typedown/THIRD-PARTY-NOTICES.txt` 和 `ui/typedown/licenses/` 附有第三方声明与许可证文本。
