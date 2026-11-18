@@ -93,6 +93,8 @@ jobs:
         shell: bash
 
       - name: Build release candidate metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/release.sh
         shell: bash
 
