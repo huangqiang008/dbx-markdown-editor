@@ -1,0 +1,805 @@
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { EditorContent, useEditor } from '@tiptap/react';
+import { TextSelection } from '@tiptap/pm/state';
+import type { Editor } from '@tiptap/core';
+import { useAppStore } from '../../stores/appStore';
+import { useShallow } from 'zustand/react/shallow';
+import { markdownToHtml } from '../../utils/markdown';
+import { serializeDoc } from '../../utils/incrementalMarkdown';
+import { registerSource, placeCursorAfterFrontmatter, loadDocFresh } from '../../utils/sourceMap';
+import { searchPluginKey } from '../../extensions/SearchExtension';
+import { editorExtensions } from './editorExtensions';
+import { EditorToolbar } from './EditorToolbar';
+import { EditorBubbleMenu } from './EditorBubbleMenu';
+import { PromptDialog, PromptDialogProps } from './dialogs/PromptDialog';
+import { ImageInsertDialog } from './dialogs/ImageInsertDialog';
+import { SlashMenu } from './SlashMenu';
+import { createSlashItems, filterSlashItems } from './slashItems';
+import { slashMenuRegistry, SlashItem } from '../../extensions/SlashCommand';
+import type { SuggestionProps } from '@tiptap/suggestion';
+import { storeImageFile, persistDataUrl } from '../../utils/pasteImage';
+import { isSingleUrl } from '../../utils/pasteText';
+import { normalizeHeading } from '../../shared/wikiLink';
+import { openWikiLink } from '../../utils/wikiOpen';
+import { extractHeadings } from '../../utils/outline';
+import { jumpToFootnote } from '../../extensions/FootnoteLinks';
+import '../styles/editor.css';
+
+/** 粘贴网址后异步取到了网页标题：找到刚插入的那条「文字 = 地址」的链接，把文字换成标题 */
+function applyLinkTitle(editor: Editor, url: string, title: string, nearPos: number) {
+  const { doc, schema } = editor.state;
+  let best: { from: number; to: number } | null = null;
+  doc.descendants((node, pos) => {
+    if (!node.isText || node.text !== url) return true;
+    if (!node.marks.some((m) => m.type.name === 'link' && m.attrs.href === url)) return true;
+    if (!best || Math.abs(pos - nearPos) < Math.abs(best.from - nearPos)) best = { from: pos, to: pos + node.nodeSize };
+    return true;
+  });
+  const hit = best as { from: number; to: number } | null;
+  if (!hit) return; // 用户已经改过这条链接，不再动它
+  const link = schema.marks.link.create({ href: url });
+  editor.view.dispatch(editor.state.tr.replaceWith(hit.from, hit.to, schema.text(title, [link])));
+}
+
+/** 把编辑器内的查找状态（匹配数 / 当前项）回写到 store */
+function reportSearchState(editor: Editor) {
+  const ps = searchPluginKey.getState(editor.state);
+  const total = ps?.matches.length ?? 0;
+  const current = ps && ps.current >= 0 ? ps.current + 1 : 0;
+  useAppStore.getState().setSearchCounts(total, current);
+}
+
+/** 每个标签页滚到哪：所有标签页共用一个编辑器和一个滚动容器，不记的话切过去就是上一篇的位置（#11） */
+const scrollTops = new Map<string, number>();
+
+export const TiptapEditor: React.FC = () => {
+  const {
+    activeTabId, tabs, updateTabContent, navigationRequest, zoom, toolbarVisible,
+  } = useAppStore(useShallow((s) => ({
+    activeTabId: s.activeTabId, tabs: s.tabs, updateTabContent: s.updateTabContent, navigationRequest: s.navigationRequest, zoom: s.zoom, toolbarVisible: s.toolbarVisible,
+  })));
+  const search = useAppStore((s) => s.search);
+  const searchCommand = useAppStore((s) => s.searchCommand);
+  const spellcheck = useAppStore((s) => s.spellcheck);
+  const showImageCaption = useAppStore((s) => s.showImageCaption);
+  const focusMode = useAppStore((s) => s.focusMode);
+  const registerEditorFlush = useAppStore((s) => s.registerEditorFlush);
+  const activeTab = tabs.find(t => t.id === activeTabId);
+  const [prompt, setPrompt] = useState<PromptDialogProps | null>(null);
+  // 插入 / 编辑图片共用一个对话框：edit 带节点位置和当前地址，确认时改属性而不是再插一张
+  const [imageDialog, setImageDialog] = useState<{ mode: 'insert' } | { mode: 'edit'; pos: number; src: string; alt: string } | null>(null);
+  const editorRef = useRef<any>(null);
+  const activeTabIdRef = useRef<string | null>(null);
+  // Tracks the previous editor instance to detect fresh mounts (e.g. after mode switch)
+  const prevEditorRef = useRef<ReturnType<typeof useEditor> | null>(null);
+  // Tracks previous activeTabId for the content-sync effect, to detect tab switches
+  const prevSyncTabIdRef = useRef<string | null>(null);
+  const externalWrite = useAppStore((s) => s.externalWrite);
+  const prevExternalRevRef = useRef(0);
+
+  // ── 编辑器 → store 同步（防抖）──
+  // 每次按键都做整篇 HTML→Markdown 转换会拖慢大文档；这里防抖 150ms，失焦 / 切换标签 / 卸载时立即刷写
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 最近一次由本编辑器写回 store 的 Markdown：用于识别「外部内容同步」效应收到的是不是自己的回声
+  const lastSyncedMdRef = useRef<string | null>(null);
+
+  const pushToStore = useCallback((tabId: string, markdown: string) => {
+    lastSyncedMdRef.current = markdown;
+    updateTabContent(tabId, markdown);
+  }, [updateTabContent]);
+
+  const syncToStore = useCallback(() => {
+    const ed = editorRef.current as Editor | null;
+    const currentTabId = activeTabIdRef.current;
+    if (!ed || !currentTabId) return;
+    const { markdown, hasDataImage } = serializeDoc(ed);
+    if (hasDataImage && !markdown.includes('data:image/')) {
+      console.warn('[Tiptap] htmlToMarkdown dropped data URL image, skipping sync');
+      return;
+    }
+    if (!markdown && ed.state.doc.textContent.trim()) {
+      console.warn('[Tiptap] htmlToMarkdown returned empty, skipping store sync to prevent data loss.');
+      return;
+    }
+    pushToStore(currentTabId, markdown);
+  }, [pushToStore]);
+
+  const flushSync = useCallback(() => {
+    if (!syncTimerRef.current) return;
+    clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = null;
+    syncToStore();
+  }, [syncToStore]);
+
+  const scheduleSync = useCallback(() => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      syncTimerRef.current = null;
+      syncToStore();
+    }, 150);
+  }, [syncToStore]);
+
+  const scheduleSyncRef = useRef(scheduleSync);
+  const flushSyncRef = useRef(flushSync);
+  scheduleSyncRef.current = scheduleSync;
+  flushSyncRef.current = flushSync;
+
+  useEffect(() => {
+    // 切换标签前先把上一标签的待同步内容刷写回 store，避免串写到新标签
+    if (activeTabIdRef.current !== activeTabId) flushSyncRef.current();
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  // 向 store 注册「立即刷写」钩子：保存 / 导出 / 关窗前由 store 调用，保证写出的是屏幕上的最新内容
+  useEffect(() => {
+    registerEditorFlush(() => flushSyncRef.current());
+    return () => registerEditorFlush(null);
+  }, [registerEditorFlush]);
+
+  // useEditor 没有依赖数组时，每次渲染都会把这份 options 重新套到编辑器上（editorProps 每次都是新对象，它认为变了）：
+  // 所以根元素的 class、spellcheck 这些要在这里按当前状态算，另起一个 effect 去 setOptions 会在下一次渲染被冲掉。
+  // 初始内容也只算一次：它只在创建编辑器时用，每次渲染都把整篇 Markdown 转一遍，带着几 MB 图片的文档会卡（#10）
+  const initialHtml = useRef<string | null>(null);
+  if (initialHtml.current === null) initialHtml.current = activeTab ? markdownToHtml(activeTab.content) : '';
+  const editor = useEditor({
+    extensions: editorExtensions,
+    content: initialHtml.current,
+    editorProps: {
+      attributes: {
+        class: `tiptap-prosemirror${showImageCaption ? ' tiptap-prosemirror--captions' : ''}`,
+        spellcheck: spellcheck ? 'true' : 'false',
+      },
+      handleClick: (_view, _pos, event) => {
+        // 点击脚注引用 [^1] → 跳到它的定义（按住 ⌘ / Ctrl 时照常落光标，方便改这几个字）
+        const footnote = (event.target as HTMLElement).closest('[data-footnote-ref]');
+        if (footnote && !event.metaKey && !event.ctrlKey && jumpToFootnote(_view, footnote.getAttribute('data-footnote-ref') || '')) return true;
+        // 点 [[链接]] → 打开它指的那篇文档（同样，按住 ⌘ / Ctrl 是选中它，好删好改）
+        const wiki = (event.target as HTMLElement).closest('[data-wiki-link]');
+        if (wiki && !event.metaKey && !event.ctrlKey) {
+          void openWikiLink(wiki.getAttribute('data-wiki-link') || '');
+          return true;
+        }
+        return false;
+      },
+      handleDoubleClick: (view, pos, event) => {
+        const coords = { left: event.clientX, top: event.clientY };
+        const result = view.posAtCoords(coords);
+        if (!result) return false;
+
+        const { state } = view;
+        let nodePos = result.inside;
+        // 如果 inside 为 -1，说明点在了顶级（直接的 doc 子节点之间），我们尝试探测 pos
+        if (nodePos === -1) {
+          const $pos = state.doc.resolve(pos);
+          nodePos = $pos.before();
+        }
+
+        if (nodePos < 0) return false;
+
+        const targetEl = event.target as HTMLElement;
+        const inTable = targetEl.closest('td') || targetEl.closest('th');
+
+        // 绝对免疫：避免劫持正常的代码高亮选词和独立按键的双击
+        if (targetEl.closest('.cm-editor') || targetEl.closest('button') || targetEl.closest('input')) {
+          return false;
+        }
+
+        // 如果在表格里，只有直接点击在非常靠近边缘的 td/th 留白处时，才作为触发（保护里面的普通文本段落双击）
+        if (inTable) {
+          if (targetEl.tagName.toLowerCase() === 'p' || targetEl.tagName.toLowerCase() === 'span') {
+            return false; // 点到文字本身，不要劫持
+          }
+          const tableEl = targetEl.closest('table');
+          if (tableEl) {
+             const rect = tableEl.getBoundingClientRect();
+             // 只有点击在整个表格绝对上下边缘的 30px 内，才认为是意图“插在表格外”。否则放行。
+             const isTopEdge = event.clientY < rect.top + 30;
+             const isBottomEdge = event.clientY > rect.bottom - 30;
+             if (!isTopEdge && !isBottomEdge) {
+                return false;
+             }
+          }
+        }
+        
+        const node = state.doc.nodeAt(nodePos);
+        if (!node) return false;
+
+        // 我们关心的富容器：diagram (mermaid), svgBlock (svg拓展), image, table
+        const blockTypes = ['diagram', 'svgBlock', 'image', 'table'];
+        
+        // 向上层层追溯，看看点击究竟属于哪个块级容器
+        let targetNode = node;
+        let targetPos = nodePos;
+        
+        if (!blockTypes.includes(node.type.name)) {
+          const $resolved = state.doc.resolve(pos);
+          for (let depth = $resolved.depth; depth > 0; depth--) {
+            const ancestor = $resolved.node(depth);
+            if (blockTypes.includes(ancestor.type.name)) {
+              targetNode = ancestor;
+              targetPos = $resolved.before(depth);
+              break;
+            }
+          }
+        }
+
+        if (blockTypes.includes(targetNode.type.name)) {
+          const dom = view.nodeDOM(targetPos);
+          if (dom instanceof HTMLElement) {
+            const rect = dom.getBoundingClientRect();
+            // 点击位置位于元素上半区还是下半区
+            const isTopHalf = event.clientY < rect.top + rect.height / 2;
+            
+            // 确保不超过文档最大范围
+            let insertPos = isTopHalf ? targetPos : targetPos + targetNode.nodeSize;
+            insertPos = Math.min(insertPos, state.doc.content.size);
+            
+            // 创建段落并插入
+            let tr = state.tr.insert(insertPos, state.schema.nodes.paragraph.create());
+            
+            // 计算新光标位置：段落开始标签之后，并强制使用 TextSelection 规避 GapCursor 横线
+            const focusPos = insertPos + 1;
+            const newSelection = TextSelection.create(tr.doc, focusPos);
+            tr = tr.setSelection(newSelection);
+            
+            view.dispatch(tr);
+            view.focus();
+            
+            return true;
+          }
+        }
+        return false;
+      },
+      handleDrop: (view, event, slice, moved) => {
+        if (!moved && event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]) {
+          const file = event.dataTransfer.files[0];
+          if (file.type.startsWith('image/')) {
+             event.preventDefault();
+             const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY });
+             storeImageFile(file, activeTabIdRef.current).then((stored) => {
+               if (!stored) return;
+               const node = view.state.schema.nodes.image.create({ src: stored, alt: file.name.replace(/\.[^.]+$/, '') });
+               const pos = Math.min(coordinates?.pos ?? view.state.selection.to, view.state.doc.content.size);
+               view.dispatch(view.state.tr.insert(pos, node));
+             });
+             return true;
+          }
+          // 别的文件（.md、文件夹）不往正文里塞内容；由 window 上的处理打开它们（utils/dropFiles.ts）
+          return true;
+        }
+        return false;
+      },
+      handlePaste: (view, event) => {
+        const clipboard = event.clipboardData;
+        if (!clipboard) return false;
+        const file = clipboard.files?.[0];
+        if (file && file.type.startsWith('image/')) {
+          event.preventDefault();
+          storeImageFile(file, activeTabIdRef.current).then((stored) => {
+            if (!stored) return;
+            const node = view.state.schema.nodes.image.create({ src: stored });
+            view.dispatch(view.state.tr.replaceSelectionWith(node));
+          });
+          return true;
+        }
+        // DBX 沙箱的 paste 事件里没有 files（剪贴板内容不暴露给 iframe）：
+        // 类型里带 image/ 就问后端要真正的图片字节，再按普通图片插入
+        if (!file && Array.from(clipboard.types || []).some((t) => t.startsWith('image/'))) {
+          event.preventDefault();
+          void window.api.clipboard?.readImage?.().then((bytes) => {
+            if (!bytes) { useAppStore.getState().notify('剪贴板里没有图片'); return; }
+            const imageFile = new File([new Uint8Array(bytes)], 'clipboard.png', { type: 'image/png' });
+            return storeImageFile(imageFile, activeTabIdRef.current).then((stored) => {
+              if (!stored || view.isDestroyed) return;
+              const node = view.state.schema.nodes.image.create({ src: stored });
+              view.dispatch(view.state.tr.replaceSelectionWith(node));
+            });
+          });
+          return true;
+        }
+
+        // 粘贴的就是一个网址：有选区 → 给选区加链接；没有 → 插入链接，再异步把文字换成网页标题
+        const text = clipboard.getData('text/plain').trim();
+        const { selection, schema } = view.state;
+        if (isSingleUrl(text) && !selection.$from.parent.type.spec.code && !selection.$from.marks().some((m) => m.type.name === 'code')) {
+          event.preventDefault();
+          const ed = editorRef.current as Editor | null;
+          if (!selection.empty) {
+            ed?.chain().focus().setLink({ href: text }).run();
+            return true;
+          }
+          const at = selection.from;
+          view.dispatch(view.state.tr.replaceSelectionWith(schema.text(text, [schema.marks.link.create({ href: text, autolink: 'bare' })]), false));
+          if (useAppStore.getState().fetchLinkTitle) {
+            window.api.web.fetchTitle(text).then((title) => {
+              const current = editorRef.current as Editor | null;
+              if (title && current && !current.isDestroyed) applyLinkTitle(current, text, title, at);
+            }).catch(() => {});
+          }
+          return true;
+        }
+        return false;
+      }
+    },
+    onUpdate: () => scheduleSyncRef.current(),
+    // 状态栏的「选中 N 字」
+    onSelectionUpdate: ({ editor: ed }) => { const { from, to, empty } = ed.state.selection; useAppStore.getState().setSelectionText(empty ? '' : ed.state.doc.textBetween(from, to, '\n')); },
+    onBlur: () => flushSyncRef.current(),
+  });
+
+  const insertMermaid = () => {
+    if (!editor) return;
+    editor.chain().focus().insertContent({
+      type: 'diagram',
+      attrs: {
+        code: 'graph TD\n  A[开始] --> B{选择}\n  B -->|选项1| C[结果1]\n  B -->|选项2| D[结果2]'
+      }
+    }).run();
+  };
+
+  const insertSVG = () => {
+    if (!editor) return;
+    editor.chain().focus().insertContent({
+      type: 'svgBlock',
+      attrs: {
+        code: '<svg width="100" height="100" viewBox="0 0 100 100">\n  <circle cx="50" cy="50" r="40" stroke="var(--color-brand-indigo)" stroke-width="3" fill="var(--bg-elevated)" />\n  <text x="50" y="55" font-size="12" text-anchor="middle" fill="var(--text-main)">SVG</text>\n</svg>'
+      }
+    }).run();
+  };
+
+  const handleToggleHeading = useCallback((level: number) => {
+    if (!editor) return;
+    const isActive = editor.isActive('heading', { level });
+    // Tiptap 的 toggleHeading() 命令有时会调用 clearNodes()，从而意外拔除包裹在外层的 list 节点。
+    // 因此我们使用 setNode 手工强制转换，将该操作安全地束缚在当前的 Block 层级中！
+    if (isActive) {
+      editor.chain().focus().setParagraph().run();
+    } else {
+      editor.chain().focus().setNode('heading', { level }).run();
+    }
+  }, [editor]);
+
+  const handleToggleOrderedList = useCallback(() => {
+    if (!editor) return;
+    // 强制保留内部节点的 wrap
+    editor.chain().focus().toggleOrderedList().run();
+  }, [editor]);
+
+  const toggleSmartCodeBlock = useCallback(() => {
+    if (!editor) return;
+    const { from, to } = editor.state.selection;
+    const isCodeBlock = editor.isActive('codeBlock');
+    
+    if (isCodeBlock) {
+      editor.chain().focus().toggleCodeBlock().run();
+      return;
+    }
+
+    // Not a code block yet. Let's try to join if multi-line is selected.
+    // Use textBetween to get the actual text including internal newlines between blocks
+    const text = editor.state.doc.textBetween(from, to, '\n');
+    
+    if (text.includes('\n')) {
+      // If multi-line, replace the entire selection with one single code block
+      editor.chain()
+        .focus()
+        .deleteSelection()
+        .insertContent({
+          type: 'codeBlock',
+          content: [{ type: 'text', text }]
+        })
+        .run();
+    } else {
+      // Simple toggle for single line or word
+      editor.chain().focus().toggleCodeBlock().run();
+    }
+  }, [editor]);
+
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  // 专注模式：当前块高亮 + 打字机滚动（光标所在行保持在视口偏上的位置）
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!editor) return;
+    editor.commands.setFocusMode(focusMode);
+    if (!focusMode) return;
+    const keepCentered = () => {
+      const box = containerRef.current;
+      if (!box || !editor.isFocused) return;
+      try {
+        const caret = editor.view.coordsAtPos(editor.state.selection.head);
+        const rect = box.getBoundingClientRect();
+        const delta = caret.top - (rect.top + rect.height * 0.42);
+        if (Math.abs(delta) > 12) box.scrollBy({ top: delta, behavior: 'smooth' });
+      } catch { /* 位置还没渲染出来 */ }
+    };
+    editor.on('selectionUpdate', keepCentered);
+    keepCentered();
+    return () => { editor.off('selectionUpdate', keepCentered); };
+  }, [editor, focusMode]);
+
+  // 当前标签页每次滚动都记下来；切回来时在下面的内容同步里放回去
+  useEffect(() => {
+    const box = containerRef.current;
+    if (!box) return;
+    const onScroll = () => { const id = activeTabIdRef.current; if (id) scrollTops.set(id, box.scrollTop); };
+    box.addEventListener('scroll', onScroll, { passive: true });
+    return () => box.removeEventListener('scroll', onScroll);
+  }, [editor]);
+
+  // 组件卸载（切换模式）时把尚未写回的内容刷到 store；没有待同步内容就不动，避免把未编辑的文件标脏
+  useEffect(() => {
+    return () => { flushSyncRef.current(); };
+  }, []);
+
+  // ── 查找 / 替换：把面板状态映射为编辑器内的高亮、定位与替换 ──
+  useEffect(() => {
+    if (!editor) return;
+    editor.commands.setSearchTerm(search.query, search.caseSensitive);
+    reportSearchState(editor);
+  }, [editor, search.query, search.caseSensitive]);
+
+  useEffect(() => {
+    if (!editor || !searchCommand) return;
+    switch (searchCommand.type) {
+      case 'next': editor.commands.findNext(); break;
+      case 'prev': editor.commands.findPrev(); break;
+      case 'replace': editor.commands.replaceCurrentMatch(search.replacement); break;
+      case 'replaceAll': editor.commands.replaceAllMatches(search.replacement); break;
+    }
+    // 处理完即清掉，切换编辑模式时新挂载的编辑器不会重放这条命令
+    useAppStore.getState().consumeSearchCommand();
+    reportSearchState(editor);
+  }, [searchCommand]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const handler = () => reportSearchState(editor);
+    editor.on('transaction', handler);
+    return () => { editor.off('transaction', handler); };
+  }, [editor]);
+
+  // 同步外部内容变更到编辑器（如切换标签或外部 AI 写入）
+  useEffect(() => {
+    if (!editor || !activeTab) return;
+
+    const isTabSwitch = prevSyncTabIdRef.current !== activeTabId;
+    prevSyncTabIdRef.current = activeTabId;
+    // 侧边栏功能（转写、纪要）明确改写了这篇：光标在编辑器里也要载入，
+    // 否则界面上看不到，用户下一次敲字还会把这次写入覆盖掉。它写之前已经把编辑器里的字刷回 store，不会丢字
+    const isExternalWrite = !!externalWrite && externalWrite.id === activeTabId && externalWrite.rev !== prevExternalRevRef.current;
+    prevExternalRevRef.current = externalWrite?.rev ?? 0;
+
+    // 整篇 Markdown → HTML 只在真要换内容时才做：带着几 MB 图片的文档，每敲一个字都解析一遍会卡（#10）
+    const toHtml = () => markdownToHtml(activeTab.content);
+    // 空白的未命名文档（刚启动、⌘N、关掉最后一个标签页之后）：光标直接放进去，和记事本一样打开就能写。
+    // 别的文档不抢焦点——从文件树点开一个文件之后，F2 / ⌫ 这些键还得归文件树
+    const focusIfBlank = () => { if (activeTab.id.startsWith('new-') && !activeTab.content && !useAppStore.getState().dialog) editor.commands.focus(); };
+    // 载入后放回这一篇上次滚到的位置；没来过的在顶上
+    const restoreScroll = () => { if (containerRef.current) containerRef.current.scrollTop = scrollTops.get(activeTab.id) ?? 0; };
+
+    // 检测是否是全新的 editor 实例（切换 word/markdown 模式后 TipTap 会完全卸载重载）
+    const isNewEditor = prevEditorRef.current !== editor;
+    prevEditorRef.current = editor;
+
+    if (isNewEditor) {
+      // 新实例时强制用 store 中的真实内容初始化，确保 data URL 图片不丢失；这一步不该留在撤销栈里
+      lastSyncedMdRef.current = null;
+      loadDocFresh(editor, toHtml());
+      registerSource(editor, activeTab.content);
+      placeCursorAfterFrontmatter(editor);
+      restoreScroll();
+      focusIfBlank();
+      return;
+    }
+
+    // tab 切换时必须强制更新内容，不受焦点或 AI 生成状态影响
+    if (!isTabSwitch) {
+      // store 的这次变化如果就是本编辑器刚写回的内容，直接跳过：
+      // 否则 md→html 往返的细微差异（代码块 / 表格 / 任务列表）会让下面的 setContent 把文档整个重置
+      if (lastSyncedMdRef.current === activeTab.content) return;
+      // 编辑器有焦点（且窗口在前台）时跳过，避免回流冲突；窗口在后台时允许外部改动同步进来
+      if (!isExternalWrite && editor.isFocused && document.hasFocus()) return;
+
+      const newHtml = toHtml();
+      // 编辑器里的空段落（块间多出来的空行、文末补的那个）在 HTML 里是 <p></p>，Markdown 转出来的没有：比较时去掉
+      const currentHtml = editor.getHTML().replace(/<p><\/p>/g, '');
+      // 如果当前编辑器有 data URL 图片但 newHtml 没有，说明 markdown→html 转换丢失了图片，跳过
+      if (currentHtml.includes('data:image/') && !newHtml.includes('data:image/')) {
+        console.warn('[Tiptap:useEffect] newHtml dropped data URL images, skipping setContent');
+        return;
+      }
+      // 只有在 HTML 发生实质性变化时才更新
+      if (currentHtml !== newHtml) {
+        if (currentHtml.replace(/\s/g, '') === newHtml.replace(/\s/g, '')) return;
+        const { from, to } = editor.state.selection;
+        editor.commands.setContent(newHtml, false);
+        registerSource(editor, activeTab.content);
+        lastSyncedMdRef.current = activeTab.content; // 不然外部把文件改回原样时，会被上面当成「刚写回的内容」跳过
+        if (isExternalWrite) {
+          // 写入的内容都在用户正文的后面，原来的光标位置还有效：放回去，不打断他正在写的那一行
+          const max = editor.state.doc.content.size;
+          editor.commands.setTextSelection({ from: Math.min(from, max), to: Math.min(to, max) });
+        } else {
+          placeCursorAfterFrontmatter(editor);
+        }
+      }
+      return;
+    }
+
+    // tab 切换：换文档，并清空撤销历史（不然在这一篇里按 ⌘Z 会把上一篇的内容撤回来，见 loadDocFresh）
+    for (const id of scrollTops.keys()) if (!tabs.some((t) => t.id === id)) scrollTops.delete(id);
+    lastSyncedMdRef.current = null;
+    loadDocFresh(editor, toHtml());
+    // 登记原文对照表：保存时没被编辑过的块直接写回原文（见 sourceMap.ts）
+    registerSource(editor, activeTab.content);
+    placeCursorAfterFrontmatter(editor);
+    restoreScroll();
+    focusIfBlank();
+  }, [activeTabId, editor, activeTab?.content, externalWrite?.rev]);
+
+  useEffect(() => {
+    if (editor && navigationRequest) {
+      const { heading, blockId, lineText } = navigationRequest;
+      let foundPos = -1;
+      // 待办面板点过来的：只比字（去掉 Markdown 记号和空白），加粗、行内代码不影响
+      const bare = (t: string) => t.replace(/[^\p{L}\p{N}]/gu, '');
+      const wantedLine = lineText ? bare(lineText) : '';
+      // 标题里有公式 / 链接时，目录给的文字和节点文字可能差几个符号：精确的找不到再按宽松的来
+      let loosePos = -1;
+      const wanted = heading ? normalizeHeading(heading.text) : '';
+      // 同名标题（每一节下面都有个「待办」）：要的是第几个，就数到第几个，不能一律停在第一个
+      const tabContent = useAppStore.getState().tabs.find((t) => t.id === useAppStore.getState().activeTabId)?.content ?? '';
+      const twins = heading ? extractHeadings(tabContent).filter((h) => h.level === heading.level && h.text === heading.text) : [];
+      let skip = Math.max(0, twins.findIndex((h) => h.id === heading?.id));
+
+      editor.state.doc.descendants((node, pos) => {
+        if (foundPos !== -1) return false;
+        if (heading && node.type.name === 'heading') {
+          if (node.attrs.level === heading.level && node.textContent === heading.text) {
+            if (skip-- === 0) { foundPos = pos; return false; }
+            return true;
+          }
+          if (loosePos === -1 && normalizeHeading(node.textContent) === wanted) loosePos = pos;
+        }
+        // [[笔记#^块]]：块 ID 写在那一段的末尾
+        if (blockId && node.isTextblock && node.textContent.trimEnd().endsWith(`^${blockId}`)) { foundPos = pos; return false; }
+        if (wantedLine && node.isTextblock && bare(node.textContent).startsWith(wantedLine)) { foundPos = pos; return false; }
+        return true;
+      });
+      if (foundPos === -1) foundPos = loosePos;
+
+      if (foundPos !== -1) {
+        editor.commands.focus(foundPos);
+        const element = editor.view.nodeDOM(foundPos) as HTMLElement;
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    }
+  }, [editor, navigationRequest]);
+
+  const openLinkDialog = useCallback(() => {
+    if (!editor) return;
+    setPrompt({
+      title: '插入链接',
+      fields: [{ name: 'url', label: '链接地址 (URL)', defaultValue: editor.getAttributes('link').href || '' }],
+      onConfirm: (values) => {
+        const url = values.url;
+        if (url) {
+          if (editor.state.selection.empty) {
+            editor.chain().focus().insertContent(`<a href="${url}">${url}</a>`).run();
+          } else {
+            editor.chain().focus().setLink({ href: url }).run();
+          }
+        } else {
+          editor.chain().focus().unsetLink().run();
+        }
+        setPrompt(null);
+      },
+      onCancel: () => setPrompt(null)
+    });
+  }, [editor]);
+
+  // ── 图片节点上的「编辑 / 删除」：NodeView 只抛事件，改文档仍然走编辑器事务 ──
+  useEffect(() => {
+    const onEdit = (e: Event) => {
+      const { pos, src, alt } = (e as CustomEvent<{ pos: number; src: string; alt: string }>).detail;
+      setImageDialog({ mode: 'edit', pos, src, alt });
+    };
+    const onDelete = (e: Event) => {
+      const { pos } = (e as CustomEvent<{ pos: number }>).detail;
+      if (!editor) return;
+      const node = editor.state.doc.nodeAt(pos);
+      if (!node) return;
+      editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize));
+      editor.commands.focus();
+    };
+    const onResize = (e: Event) => {
+      const { pos, width } = (e as CustomEvent<{ pos: number; width: number | null }>).detail;
+      if (!editor) return;
+      const node = editor.state.doc.nodeAt(pos);
+      if (!node) return;
+      editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, width }));
+      const tabId = activeTabIdRef.current;
+      if (tabId) pushToStore(tabId, serializeDoc(editor).markdown);
+    };
+    document.addEventListener('note-image:edit', onEdit);
+    document.addEventListener('note-image:delete', onDelete);
+    document.addEventListener('note-image:resize', onResize);
+    return () => {
+      document.removeEventListener('note-image:edit', onEdit);
+      document.removeEventListener('note-image:delete', onDelete);
+      document.removeEventListener('note-image:resize', onResize);
+    };
+  }, [editor]);
+
+  // ── 斜杠命令菜单：Suggestion 插件负责监听 `/` 与查询文本，这里只管 UI 与键盘 ──
+  const [slash, setSlash] = useState<{ props: SuggestionProps<SlashItem, SlashItem>; index: number } | null>(null);
+  const slashRef = useRef(slash);
+  slashRef.current = slash;
+  const slashActionsRef = useRef({
+    openTable: () => {},
+    openImage: () => setImageDialog({ mode: 'insert' }),
+    openLink: () => {},
+  });
+  /** 斜杠菜单和命令面板共用的一份命令（对话框类的动作经 slashActionsRef 取到最新的） */
+  const buildSlashItems = () => createSlashItems({
+    openTable: () => slashActionsRef.current.openTable(),
+    openImage: () => slashActionsRef.current.openImage(),
+    openLink: () => slashActionsRef.current.openLink(),
+  });
+
+  useEffect(() => {
+    slashMenuRegistry.items = (query) => filterSlashItems(buildSlashItems(), query);
+    slashMenuRegistry.handlers = {
+      onStart: (props) => setSlash({ props, index: 0 }),
+      onUpdate: (props) => setSlash((prev) => ({ props, index: prev && prev.props.items.length === props.items.length ? prev.index : 0 })),
+      onExit: () => setSlash(null),
+      onKeyDown: ({ event }) => {
+        const current = slashRef.current;
+        if (!current) return false;
+        const count = current.props.items.length;
+        if (event.key === 'ArrowDown') { setSlash({ ...current, index: count ? (current.index + 1) % count : 0 }); return true; }
+        if (event.key === 'ArrowUp') { setSlash({ ...current, index: count ? (current.index - 1 + count) % count : 0 }); return true; }
+        if (event.key === 'Enter' || event.key === 'Tab') {
+          const item = current.props.items[current.index];
+          if (item) current.props.command(item);
+          return true;
+        }
+        if (event.key === 'Escape') { setSlash(null); return true; }
+        return false;
+      },
+    };
+    return () => {
+      slashMenuRegistry.handlers = null;
+      slashMenuRegistry.items = () => [];
+    };
+  }, []);
+
+  const openTableDialog = useCallback(() => {
+    if (!editor) return;
+    setPrompt({
+      title: '插入表格',
+      fields: [
+        { name: 'rows', label: '行数', defaultValue: '3', type: 'number' },
+        { name: 'cols', label: '列数', defaultValue: '3', type: 'number' }
+      ],
+      onConfirm: (values) => {
+        const rows = parseInt(values.rows);
+        const cols = parseInt(values.cols);
+        if (rows > 0 && cols > 0) {
+          editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run();
+        }
+        setPrompt(null);
+      },
+      onCancel: () => setPrompt(null)
+    });
+  }, [editor]);
+
+  // 对话框 / 气泡的打开函数在下面才定义，通过 ref 提供给斜杠菜单
+  slashActionsRef.current.openTable = openTableDialog;
+  slashActionsRef.current.openLink = openLinkDialog;
+
+  if (!editor) return null;
+
+  return (
+    <div className={`tiptap-editor-root ${focusMode ? 'focus-mode' : ''}`}>
+      {toolbarVisible && !focusMode && (
+        <EditorToolbar
+          editor={editor}
+          onToggleHeading={handleToggleHeading}
+          onToggleOrderedList={handleToggleOrderedList}
+          onToggleCodeBlock={toggleSmartCodeBlock}
+          onInsertTable={openTableDialog}
+          onInsertImage={() => setImageDialog({ mode: 'insert' })}
+          onInsertLink={openLinkDialog}
+          onInsertMermaid={insertMermaid}
+          onInsertSVG={insertSVG}
+        />
+      )}
+
+      <div className="tiptap-container" ref={containerRef}>
+        {prompt && <PromptDialog {...prompt} />}
+        {slash && (
+          <SlashMenu
+            items={slash.props.items}
+            selectedIndex={slash.index}
+            anchor={slash.props.clientRect?.() ?? null}
+            onSelect={(item) => slash.props.command(item)}
+            onHover={(index) => setSlash((prev) => (prev ? { ...prev, index } : prev))}
+          />
+        )}
+        {imageDialog && (
+          <ImageInsertDialog
+            initial={imageDialog.mode === 'edit' ? { src: imageDialog.src, alt: imageDialog.alt } : undefined}
+            onConfirm={async (rawSrc, alt) => {
+              const dialog = imageDialog;
+              setImageDialog(null);
+              // 本地上传拿到的是 data URL：存成笔记旁的文件，Markdown 里只留相对路径，不再把几 MB 的 base64 塞进正文
+              const src = await persistDataUrl(rawSrc, activeTabIdRef.current, alt || 'image');
+              if (!src) return;
+              // 编辑已有的图：改节点属性（地址可能换了文件），不再插一张新的
+              if (dialog.mode === 'edit') {
+                if (!editor) return;
+                const target = editor.state.doc.nodeAt(dialog.pos);
+                if (!target) return;
+                editor.view.dispatch(
+                  editor.state.tr.setNodeMarkup(dialog.pos, undefined, { ...target.attrs, src, alt: alt || null })
+                );
+                const tabId = activeTabIdRef.current;
+                if (tabId) pushToStore(tabId, serializeDoc(editor).markdown);
+                return;
+              }
+              requestAnimationFrame(() => {
+                if (!editor) return;
+                editor.commands.focus();
+                requestAnimationFrame(() => {
+                  const imageNode = editor.schema.nodes.image?.create({ src, alt: alt || null });
+                  if (imageNode) {
+                    editor.view.dispatch(
+                      editor.state.tr.replaceSelectionWith(imageNode)
+                    );
+                    // 插入后主动同步，避免 data URL 在 onUpdate 时序中丢失
+                    requestAnimationFrame(() => {
+                      const tabId = activeTabIdRef.current;
+                      if (tabId) {
+                        const md = serializeDoc(editor).markdown;
+                        if (md) pushToStore(tabId, md);
+                      }
+                    });
+                  }
+                });
+              });
+            }}
+            onCancel={() => setImageDialog(null)}
+          />
+        )}
+        {/* 点页面空白处也能开始写。但来自输入框 / 按钮 / 节点视图里可交互区域的点击不算：
+            不然属性卡片里的输入框刚拿到焦点就被抢回编辑器，打的字全进了正文 */}
+        <div className="tiptap-page" onClick={(e) => { if (!(e.target as HTMLElement).closest('input, textarea, select, button, [data-interactive]')) editor.chain().focus().run(); }} style={{
+          transform: `scale(${zoom / 100})`
+        }}>
+          <EditorBubbleMenu
+            editor={editor}
+            onToggleCodeBlock={toggleSmartCodeBlock}
+          />
+
+        <EditorContent 
+            editor={editor} 
+            onKeyDown={(e) => {
+                // ⌘K：插入 / 编辑链接（有选区时给选区加链接）
+                if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === 'KeyK') {
+                    e.preventDefault();
+                    openLinkDialog();
+                    return;
+                }
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};

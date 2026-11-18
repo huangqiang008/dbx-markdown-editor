@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production / Build
+dist/
+release/
+post-to-wechat
+wiki/
+*.editorconfig
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+eslintdebug.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env.local
+
+# OS Metadata
+.DS_Store
+Thumbs.db
+Icon?
+# 上面那条是访达的自定义图标文件（Icon\r）；文件系统不分大小写时它会连 icons 目录一起吃掉——Tauri 的图标得进仓库
+!src-tauri/icons
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+
+# Debug and Test
+debug-*.js
+test-*.js
+PR/
+
+# Local configuration
+.gemini/
+.agent/
+.agents/
+.iml-markdown-editor-config
+implementation_plan.md
+task.md
+walkthrough.md
+build_log_v2.txt
+build_log_v3.txt
+build_log.txt
+build_mac_final.log
+build_mac.log
+build_win_final.log
+build_win.log
+
+# Claude Code 的本机设置
+.claude/

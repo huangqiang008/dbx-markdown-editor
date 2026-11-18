@@ -1,0 +1,109 @@
+name: Package and publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to update, for example v1.0.0"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Install dbx-plugin CLI
+        run: npm install --global @dbx-app/plugin-cli
+        shell: bash
+
+      - name: Check CLI version
+        run: dbx-plugin version
+        shell: bash
+
+      # 前端单文件产物：editor/ 源码编译后落到 ui/lite/index.html
+      - name: Build editor UI
+        run: |
+          npm ci --prefix editor
+          npm run build --prefix editor
+        shell: bash
+
+      # The package command builds from the checked-out tag. Go's default
+      # buildvcs setting records the tag commit in the sidecar binary.
+      - name: Package ${{ matrix.target }}
+        env:
+          GOFLAGS: -buildvcs=true
+        run: dbx-plugin package . --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbxp-${{ matrix.target }}
+          path: |
+            dist/*.dbxp
+            dist/*.artifact.json
+          if-no-files-found: error
+
+  publish:
+    name: Aggregate and upload
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dbxp-*
+          merge-multiple: true
+          path: dist
+
+      - name: Resolve release version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.release_tag }}"
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Build release candidate metadata
+        run: bash scripts/release.sh
+        shell: bash
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" --clobber \
+            dist/*.dbxp \
+            dist/*.artifact.json \
+            store-submission/release-candidates.json
+        shell: bash

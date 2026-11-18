@@ -18,3 +18,9 @@ Typedown-main/
 node_modules/
 bin/
 backend/*.exe
+
+# 提交/发布中间产物（哈希随每次打包变化，不是源码）
+dbx-store-candidate.*.json
+
+# 浏览器自动化调试日志
+.playwright-cli/

@@ -1,0 +1,94 @@
+THIRD-PARTY NOTICES — com.huangqiang.mdeditor
+
+本插件的 ui/lite/index.html 是编译后的单文件产物，内含下列第三方开源代码与字体。
+各组件的完整许可证文本可在对应 npm 包或其上游仓库取得；本目录附上了需要随分发
+保留全文的许可证。
+逐组件的 MIT 版权持有人清单见 MIT-COMPONENT-NOTICES.txt；上游内核的版本锚点、
+取码范围与 cherry-pick 流程见 SOURCE-PROVENANCE.txt。
+
+一、编辑内核
+  iml-editor-lite lite-v26.4.6 — MIT — Copyright (c) 2026 imoling
+  来源：https://github.com/imoling/iml-editor-lite
+  本插件基于其 src/ 改造（移除 Tauri 壳、替换 window.api 适配层）。
+  全文见 IML-EDITOR-LITE-MIT.txt。
+  注意：授权以各仓库、各版本自身随附的 LICENSE 为准；lite（lite-v26.4.x）与
+  完整版（26.x）是两条独立版本线，版本号不可横向比较。
+    - iml-editor-lite：lite-v26.4.0 ~ lite-v26.4.5 为 CC BY-NC 4.0（禁商用）；
+      lite-v26.4.6 起改为 MIT。依据：docs/release-notes-lite-26.4.6.md 末行
+      "许可证由 CC BY-NC 4.0 改为 MIT"，以及 LICENSE 文件历史 commit
+      f4c4ac5（2026-11-01，message 含「许可证改为 MIT」）；此前 e815b13
+      （2026-03-15）为「添加 CC BY-NC 4.0 开源许可证」。
+    - iml-markdown-editor（完整版）：26.9.0 之前为 CC BY-NC 4.0，26.9.0 起
+      改为 MIT（见其 docs/release-notes-26.9.0.md）。
+  本插件使用的是 lite-v26.4.6，即 lite 首个 MIT 版本，其 LICENSE 为 MIT。
+  关于改授权的有效性：截至本插件构建时，iml-editor-lite 仓库的全部提交作者
+  均为 imoling，多数提交另带 Co-Authored-By: Claude（Anthropic）标记。AI 辅助
+  生成不构成著作权法意义上的作者身份（美国版权局等机构明确纯 AI 生成内容
+  不产生著作权），故 AI co-author 不享有版权，唯一人类版权持有人 imoling
+  作出的改授权有效，不存在第三方人类贡献者的权利瑕疵。这一论断以 GitHub
+  提交历史为准，可通过文末 SOURCE-PROVENANCE.txt 记录的版本与 commit 复核。
+  CC BY-NC 4.0 允许署名 + 非商业地复制与改编，但禁止商用；请勿从上述任一
+  仓库的 CC BY-NC 4.0 历史 tag/提交取码，否则会重新引入非商业授权约束。
+
+二、本插件自有代码
+  MIT — Copyright (c) 2026 huangqiang — 全文见 PROJECT-MIT.txt。
+
+三、随产物分发的运行时依赖（版本取自 editor/package-lock.json）
+  MIT：
+    react 19.2.4、react-dom 19.2.4、zustand 5.0.12
+    @tiptap/core 2.27.2、@tiptap/react 2.27.2、@tiptap/pm 2.27.2、
+      @tiptap/starter-kit 2.27.2 及 @tiptap/extension-* 系列
+    @uiw/react-codemirror 4.25.8、@codemirror/* 系列（lang-markdown、
+      language-data、search、state、view 等）
+    marked 15.0.12、turndown 7.2.2、turndown-plugin-gfm 1.0.2
+    lowlight 3.3.0（及其依赖 highlight.js）、mermaid 11.13.0
+    katex 0.16.38、docx 9.7.1
+  BSD-3-Clause：
+    highlight.js 11.11.1、d3-ease 3.0.1、d3-sankey 0.12.3、rw 1.3.3。
+    各版权归许可证文本中所列权利人；全文见 BSD-3-CLAUSE-RUNTIME-NOTICES.txt。
+  BSD-2-Clause：
+    entities 4.5.0、@mixmark-io/domino 2.2.0（Turndown 传递依赖；浏览器
+    构建将 domino 替换为空模块，但一并保留许可声明）。全文见
+    BSD-2-CLAUSE-NOTICES.txt。
+  ISC：
+    lucide-react 0.577.0
+    d3-array 3.2.4、d3-path 3.1.0、d3-shape 3.2.0、internmap 2.0.3
+    （mermaid / d3-sankey 的传递依赖）
+    全文见 LUCIDE-ISC.txt（ISC 许可文本通用）
+  MPL-2.0 OR Apache-2.0：
+    dompurify 3.4.15 — 本分发选择 Apache-2.0
+  Apache-2.0：
+    chevrotain 11.1.2 及 @chevrotain/gast、regexp-to-ast、types、utils
+    （mermaid 的图语法解析器，随产物分发）
+    以上 Apache-2.0 组件均未随包提供 NOTICE 文件，故不触发 Apache-2.0
+    第 4(d) 条的 NOTICE 转发义务；许可全文见 APACHE-2.0.txt。
+  KaTeX 本体：
+    MIT — 全文见 KATEX-MIT.txt
+
+四、内联字体
+  产物内联了 20 个 KaTeX_*.woff2 字体文件（公式渲染需要）。这些字体有独立于
+  KaTeX 本体的授权，随分发保留：
+    KaTeX-Fonts-Apache-2.0.txt
+    SIL-OFL-1.1.txt
+  字体版权归各自权利人所有。本插件仅将字体随软件内嵌分发（OFL 1.1 允许
+  随软件捆绑/嵌入/销售，禁止的是字体「单独售卖 by itself」）；如后续单独
+  分发字体文件，须遵守 SIL OFL 1.1 的保留字体名与不得单独销售条款。
+
+五、Go 后端运行时依赖
+  golang.org/x/image v0.24.0（BMP / WebP 解码）— BSD 风格许可证，版权归
+  The Go Authors。二进制分发所需版权声明、条件与免责声明见
+  GO-AUTHORS-BSD.txt。
+  说明：该依赖固定在 v0.24.0 —— v0.25.0 起要求 go 1.23，而 dbx-plugin dev
+  的 .dbx-dev/go.work 硬编码 go 1.22，升级会导致后端无法构建。
+
+六、其他运行时传递依赖
+  jszip 3.10.2 — SPDX: MIT OR GPL-3.0-or-later；本分发选择 MIT，全文见
+  JSZIP-MIT.txt。由 docx 导出依赖使用。
+  pako 1.0.11 — SPDX: MIT AND Zlib；两部分许可见 PAKO-MIT-AND-ZLIB.txt，
+  作为 JSZip 的压缩依赖分发。
+
+七、仅构建期使用、不进入分发产物
+  vite、@vitejs/plugin-react、typescript (Apache-2.0)、eslint、vitest、
+  jsdom、typescript-eslint 等 devDependencies。
+  caniuse-lite (CC-BY-4.0) 仅作为构建期浏览器兼容性数据，不进入安装包；
+  若单独再分发该依赖，须依其 LICENSE 履行署名要求。

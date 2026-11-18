@@ -1,0 +1,53 @@
+SOURCE PROVENANCE — com.huangqiang.mdeditor
+编辑内核的上游来源、授权锚点与 cherry-pick 规则
+
+本文件解决一个具体的合规风险：编辑内核（src/utils、src/shared、src/extensions）
+逐文件来自上游 iml-editor-lite，通过 cherry-pick 同步修复。上游在 lite-v26.4.6
+才从 CC BY-NC 4.0 改为 MIT，此前版本禁止商用。若从历史 tag 取码，会把非商业
+授权代码混进 MIT 分发的插件。本文件把「取哪个版本、凭什么、怎么核」写死。
+
+一、上游与授权锚点
+  仓库：https://github.com/imoling/iml-editor-lite
+  基准版本：lite-v26.4.6（lite 线首个 MIT 版本）
+  MIT 生效 commit：f4c4ac584d3e797685186afb1639bb349f54d122（2026-11-01，
+    message 含「许可证改为 MIT」）；该 tag 的 LICENSE 为 MIT，
+    Copyright (c) 2026 imoling，全文见 IML-EDITOR-LITE-MIT.txt。
+  核心内核的更早来源：本仓库由 iml-markdown-editor（完整版）拆出，内核文件
+    与完整版逐字相同。完整版 26.9.0 之前同为 CC BY-NC 4.0，26.9.0 起 MIT。
+    同步修复时若 remote 指向完整版，同样只取 26.9.0+ 的提交。
+  权威证据：以各仓库各版本随附的 LICENSE 原文为准，commit 与发布说明仅作佐证。
+
+二、禁止取码的版本（CC BY-NC 4.0，禁商用）
+  iml-editor-lite：lite-v26.4.0 ~ lite-v26.4.5（含对应历史提交）
+  iml-markdown-editor（完整版）：26.9.0 之前的全部版本
+  规则：cherry-pick 前必须确认目标提交在上述 MIT 生效 commit 之后
+  （lite 线）或 26.9.0 之后（完整版线）。版本号不可跨线比较：lite 的
+  26.4.6 与完整版的 26.4.6 不是同一个东西，只能用各自线的 MIT 起点。
+
+三、本插件内核目录清单（构建时快照，2026-11-18）
+  src/utils/       50 个 .ts（27 实现 + 23 测试）—— 编辑内核、导出、保真
+  src/shared/      17 个 .ts（10 实现 + 7 测试）—— 上游 electron/shared 移入
+  src/extensions/  31 个 .ts（22 实现 + 9 测试）—— Tiptap 扩展
+  src/platform/     2 个 .ts —— 本插件自有的 DBX 适配层（非上游，勿 cherry-pick）
+  src/App.tsx、src/stores/ —— 挂载点，本插件改造过，手工同步
+  说明：utils/shared/extensions 三目录在上游与完整版「逐字相同」（上游 README
+  明示），是本插件的主要上游代码面；每次同步后若文件数发生大变化，复核来源。
+
+四、cherry-pick 检查清单（每次同步上游修复后逐条确认）
+  [ ] 目标提交的父链在 MIT 生效点之后（git log --oneline <base>..<commit>）
+  [ ] git show <commit>:LICENSE 显示为 MIT（若提交触及 LICENSE 更要看）
+  [ ] 未从 CC BY-NC 历史 tag 取码：git tag --contains <commit> 交叉核对
+  [ ] 同步后运行 npm run check（含 provenance 校验，见下）
+  [ ] 若内核目录文件数变化超过 ±2，更新本文件第三节的快照数字并写明原因
+  [ ] 若上游版本前进，更新 editor/src/utils/appInfo.ts 的 UPSTREAM_VERSION，
+      并同步 THIRD-PARTY-NOTICES.txt 与 finalize.mjs banner 中的版本字符串
+
+五、机器可校验部分
+  editor/scripts/check-provenance.mjs 在 npm run check 中执行，校验：
+    1. appInfo.ts 的 UPSTREAM_VERSION 带 lite-v 前缀，且版本号 >= 26.4.6
+    2. UPSTREAM_LICENSE 声明为 MIT 且版权人为 imoling
+    3. 本文件存在且含 MIT 生效 commit hash（防清单被误删/低版本替换）
+    4. 内核三目录的文件数与第三节快照一致（漂移需人工更新清单）
+    5. 本插件自有代码 LICENSE（根目录）为 MIT
+  该脚本只守「声明与文件数的一致性」，不能证明逐文件来源的合法性——
+  逐文件来源靠第四节的 cherry-pick 人工清单与上游 git 历史保证。

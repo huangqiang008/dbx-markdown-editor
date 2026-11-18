@@ -1,0 +1,162 @@
+import { useAppStore } from '../stores/appStore';
+import { markdownToStaticHtml } from './markdown';
+import { resolveAssetUrl, noteDirOf } from './assetUrl';
+import { deriveNoteTitle } from './noteTitle';
+import type { NoticeAction } from '../stores/appStore';
+
+const REVEAL_LABEL = window.api.app.platform === 'darwin' ? '在访达中显示' : '在资源管理器中显示';
+
+/**
+ * 导出默认名：
+ * - 文件标签页：沿用原文件名（只换后缀）。tab.id 是完整路径，比 tab.title 可靠。
+ * - 未命名文档（id 以 new- 开头）：从正文推导标题（H1 / 第一行有文字的行），
+ *   写了内容的文档不该叫「未命名」——「另存为」用的是同一套推导。
+ * - 都没有：退回标签页标题。
+ */
+function exportBaseName(tab: { id: string; title: string; content: string }): string {
+  if (!tab.id.startsWith('new-') && /[/\\]/.test(tab.id)) {
+    return (tab.id.split(/[/\\]/).pop() || '').replace(/\.(md|markdown|mdown|mkd|txt)$/i, '') || tab.title;
+  }
+  return deriveNoteTitle(tab.content) || tab.title;
+}
+
+/**
+ * 「已导出」的提示带两个按钮：打开文件、在访达里选中它——导出到哪去了，不用再翻文件夹找。
+ */
+function notifyExported(text: string, paths: string[]) {
+  const [first] = paths;
+  const actions: NoticeAction[] = [];
+  if (paths.length === 1) actions.push({ label: '打开', run: () => { void window.api.export.open(first); } });
+  actions.push({ label: REVEAL_LABEL, run: () => { void window.api.export.reveal(first); } });
+  useAppStore.getState().notify(text, undefined, actions);
+}
+
+/**
+ * 同一时间只跑一个导出。连按两次 ⌘P、菜单和快捷键同时触发（开发模式下 menu:export 还会因为 effect 跑两遍而来两次）
+ * 都不该并发地生成两份：PDF 那条路是往页面里摆一个打印容器，两个并发的导出会各摆一份，印出来就是两遍
+ */
+let exporting = false;
+const exclusive = (run: () => Promise<void>) => async (): Promise<void> => {
+  if (exporting) return;
+  exporting = true;
+  try { await run(); } finally { exporting = false; }
+};
+
+/** 把当前活动文档导出为 PDF（菜单与 ⌘P 共用） */
+export const exportActiveTabToPdf = exclusive(async () => {
+  // 编辑器写回是防抖的，导出前先刷新到 store
+  useAppStore.getState().editorFlush?.();
+  const { tabs, activeTabId } = useAppStore.getState();
+  const tab = tabs.find((t) => t.id === activeTabId);
+  if (!tab) return;
+  const { notify } = useAppStore.getState();
+  // Tauri 壳在 macOS 上：先问存哪，再直接存成 PDF（不弹打印面板）
+  if (window.api.export.pdfTo) {
+    const target = await window.api.export.askPath(exportBaseName(tab), 'PDF 文档', 'pdf');
+    if (!target) return;
+    notify('正在生成 PDF…', 90000);
+    const done = await window.api.export.pdfTo(await markdownToStaticHtml(tab.content), target, tab.id);
+    if (done?.success && done.path) notifyExported('已导出 PDF', [done.path]);
+    else notify(`导出失败：${done?.error || '未知错误'}`);
+    return;
+  }
+  const staticHtml = await markdownToStaticHtml(tab.content);
+  // Tauri 壳在 Windows 上走 WebView2 的打印面板（带预览）：先告诉用户 PDF 在面板的哪儿
+  if (window.api.assetBase) notify('在打印面板的「打印机」里选「另存为 PDF」', 12000);
+  const result = await window.api.export.pdf(staticHtml, tab.title, tab.id);
+  if (result?.printed) return;
+  if (result?.success && result.path) notifyExported('已导出 PDF', [result.path]);
+  else if (result && !result.canceled) useAppStore.getState().notify(`导出失败：${result.error || '未知错误'}`);
+});
+
+/** 导出为长图（PNG）：发群里、发朋友圈用。很长的文档会自动分成几张，切在段落的边界上 */
+export const exportActiveTabToImage = exclusive(async () => {
+  useAppStore.getState().editorFlush?.();
+  const { tabs, activeTabId, notify, getNewNoteDir } = useAppStore.getState();
+  const tab = tabs.find((t) => t.id === activeTabId);
+  if (!tab) return;
+  // 先问存哪：取消了就不必白白生成
+  const target = await window.api.export.askPath(exportBaseName(tab), 'PNG 图片', 'png');
+  if (!target) return;
+  notify('正在生成长图…', 60000);
+  try {
+    const { renderLongImage } = await import('./exportImage');
+    const parts = await renderLongImage(await markdownToStaticHtml(tab.content), noteDirOf(tab.id, getNewNoteDir()));
+    const result = await window.api.export.writeFiles(target, parts);
+    // 分成好几张的只给「显示」：打开只能开一张，不如在文件夹里一起看
+    if (result?.success && result.paths?.length) notifyExported(result.paths.length > 1 ? `文档很长，分成了 ${result.paths.length} 张图` : '已导出长图', result.paths);
+    else notify(`导出失败：${result?.error || '未知错误'}`);
+  } catch (err: any) {
+    notify(`导出失败：${err?.message || err}`);
+  }
+});
+
+const MAX_DOCX_IMAGE_PIXELS = 1600;
+
+/**
+ * 给 Word 导出取一张图：不管原来是什么格式（webp、avif、svg、gif…）都画到画布上转成 PNG——Word 和 WPS 都认。
+ * 本地图片走 fetch 拿字节再转成 data: 地址去加载：直接拿 iml-asset:// 当 <img> 的地址画到画布上，画布会被当成跨源而「污染」，导不出来。
+ */
+export async function loadImageAsPng(src: string, noteDir: string | null): Promise<{ data: Uint8Array; width: number; height: number } | null> {
+  try {
+    let dataUrl: string;
+    if (src.startsWith('svg:')) dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(src.slice(4))}`;
+    else if (src.startsWith('data:')) dataUrl = src;
+    else {
+      const blob = await (await fetch(resolveAssetUrl(src, noteDir))).blob();
+      dataUrl = await new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = () => reject(r.error); r.readAsDataURL(blob); });
+    }
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject(new Error('decode failed')); img.src = dataUrl; });
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    if (!w || !h) return null;
+    const scale = Math.min(1, MAX_DOCX_IMAGE_PIXELS / w);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const g = canvas.getContext('2d');
+    if (!g) return null;
+    g.fillStyle = '#fff'; // 透明底的图在 Word 的深色界面里会是一团黑
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    g.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!png) return null;
+    return { data: new Uint8Array(await png.arrayBuffer()), width: canvas.width, height: canvas.height };
+  } catch {
+    return null; // 取不到的图在文档里留一行说明，不让整个导出失败
+  }
+}
+
+/** 导出为 Word（.docx）：标题、列表、表格、代码、图片都转成 Word 自己的结构，WPS / Pages 也能开 */
+export const exportActiveTabToDocx = exclusive(async () => {
+  useAppStore.getState().editorFlush?.();
+  const { tabs, activeTabId, notify, getNewNoteDir } = useAppStore.getState();
+  const tab = tabs.find((t) => t.id === activeTabId);
+  if (!tab) return;
+  notify('正在生成 Word 文档…', 60000);
+  try {
+    const staticHtml = await markdownToStaticHtml(tab.content);
+    const noteDir = noteDirOf(tab.id, getNewNoteDir());
+    const { htmlToDocx } = await import('./exportDocx');
+    const bytes = await htmlToDocx(staticHtml, { title: exportBaseName(tab), loadImage: (src) => loadImageAsPng(src, noteDir) });
+    const result = await window.api.export.saveFile(exportBaseName(tab), bytes, 'Word 文档', 'docx');
+    if (result?.success && result.path) notifyExported('已导出 Word 文档', [result.path]);
+    else if (result?.canceled) useAppStore.setState({ notice: null });
+    else notify(`导出失败：${result?.error || '未知错误'}`);
+  } catch (err: any) {
+    notify(`导出失败：${err?.message || err}`);
+  }
+});
+
+/** 导出为单文件 HTML（本地图片内联，拷到哪里都能看）；frontmatter 作为属性卡片保留 */
+export const exportActiveTabToHtml = exclusive(async () => {
+  useAppStore.getState().editorFlush?.();
+  const { tabs, activeTabId, notify } = useAppStore.getState();
+  const tab = tabs.find((t) => t.id === activeTabId);
+  if (!tab) return;
+  const staticHtml = await markdownToStaticHtml(tab.content, { keepFrontmatter: true });
+  const result = await window.api.export.html(staticHtml, exportBaseName(tab), tab.id);
+  if (result?.success && result.path) notifyExported('已导出 HTML', [result.path]);
+  else if (result && !result.canceled) notify(`导出失败：${result.error || '未知错误'}`);
+});

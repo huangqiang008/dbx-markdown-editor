@@ -270,6 +270,30 @@ func TestReadImage(t *testing.T) {
 	callErr(t, "fs/readImage", map[string]string{"path": filepath.Join(dir, "x.exe")})
 }
 
+func TestSaveAsset(t *testing.T) {
+	dir := t.TempDir()
+	docPath := filepath.Join(dir, "sub", "test.md")
+	os.MkdirAll(filepath.Dir(docPath), 0o755)
+
+	// 保存 1x1 png 资产
+	b64 := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+	res := mustCall(t, "fs/saveAsset", map[string]string{
+		"docPath": docPath,
+		"base64":  b64,
+	})
+	rel, ok := res["relativePath"].(string)
+	if !ok || !strings.HasPrefix(rel, "./assets/") {
+		t.Fatalf("unexpected relativePath: %v", res)
+	}
+	abs, ok := res["absolutePath"].(string)
+	if !ok {
+		t.Fatalf("unexpected absolutePath: %v", res)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		t.Fatalf("saved asset does not exist: %v", err)
+	}
+}
+
 func TestDialogScripts(t *testing.T) {
 	s, err := buildDialogScript("open", "", "markdown")
 	if err != nil || !strings.Contains(s, "OpenFileDialog") || !strings.Contains(s, "*.md") {
@@ -288,12 +312,20 @@ func TestDialogScripts(t *testing.T) {
 		t.Fatalf("save script bad: %v %q", err, s)
 	}
 	s, err = buildDialogScript("save", "", "md")
-	if err != nil || !strings.Contains(s, `"untitled.md"`) {
+	if err != nil || !strings.Contains(s, `"未命名.md"`) {
 		t.Fatalf("save default name bad: %v", err)
 	}
 	s, err = buildDialogScript("save", "note", "html")
-	if err != nil || !strings.Contains(s, `"note.html"`) || !strings.Contains(s, `DefaultExt = "html"`) || !strings.Contains(s, "HTML (*.html;*.htm)") {
+	if err != nil || !strings.Contains(s, `"note.html"`) || !strings.Contains(s, `DefaultExt = "html"`) || !strings.Contains(s, "HTML 文档 (*.html;*.htm)") {
 		t.Fatalf("save html script bad: %v %q", err, s)
+	}
+	s, err = buildDialogScript("save", "note.pdf", "pdf")
+	if err != nil || !strings.Contains(s, `"note.pdf"`) || !strings.Contains(s, `DefaultExt = "pdf"`) || !strings.Contains(s, "PDF 文档 (*.pdf)") {
+		t.Fatalf("save pdf script bad: %v %q", err, s)
+	}
+	s, err = buildDialogScript("save", "note.png", "image")
+	if err != nil || !strings.Contains(s, `"note.png"`) || !strings.Contains(s, `DefaultExt = "png"`) || !strings.Contains(s, "PNG 图片 (*.png)") {
+		t.Fatalf("save image script bad: %v %q", err, s)
 	}
 	// 注入尝试必须被过滤
 	s, err = buildDialogScript("save", `a"; rm -rf / #.md`, "md")
@@ -313,9 +345,11 @@ func TestDialogScripts(t *testing.T) {
 
 func TestSanitizeName(t *testing.T) {
 	cases := map[string]string{
-		"":                    "untitled.md",
+		"":                    "未命名.md",
 		"note.md":             "note.md",
 		"my note.md":          "my_note.md",
+		"工作周报.md":              "工作周报.md",
+		"项目 2026 总结.md":        "项目_2026_总结.md",
 		`a";$(calc).md`:       "a____calc_.md",
 		"../../../etc/passwd": ".._.._.._etc_passwd",
 	}
@@ -323,5 +357,17 @@ func TestSanitizeName(t *testing.T) {
 		if got := sanitizeName(in); got != want {
 			t.Fatalf("sanitizeName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// 回归：前端曾用 defaultName 键名，后端只认 name，文件名悄悄变空导致保存框永远「未命名」
+func TestPickParamsNameAlias(t *testing.T) {
+	var p1 pickParams
+	if err := json.Unmarshal([]byte(`{"name":"a.html","filter":"html"}`), &p1); err != nil || p1.pickName() != "a.html" {
+		t.Fatalf("name key bad: %v %q", err, p1.pickName())
+	}
+	var p2 pickParams
+	if err := json.Unmarshal([]byte(`{"defaultName":"b.pdf","filter":"pdf"}`), &p2); err != nil || p2.pickName() != "b.pdf" {
+		t.Fatalf("defaultName alias bad: %v %q", err, p2.pickName())
 	}
 }

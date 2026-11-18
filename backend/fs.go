@@ -49,6 +49,12 @@ type listParams struct {
 	Dir string `json:"dir"`
 }
 
+type saveAssetParams struct {
+	DocPath  string `json:"docPath"`
+	Base64   string `json:"base64"`
+	Filename string `json:"filename"`
+}
+
 // validatePath 做基本卫生检查：非空、无 NUL、转为绝对路径。
 // 沙箱前端只能拿到用户本地路径，本 sidecar 以用户权限运行，不做目录禁锢。
 func validatePath(p string) (string, error) {
@@ -375,3 +381,87 @@ func handleFSReadImage(params json.RawMessage) (interface{}, *RPCError) {
 	}
 	return result, nil
 }
+
+// handleFSSaveAsset 保存图片资产到文档同级或子目录（默认 ./assets）。
+// 返回相对于文档目录的相对路径，例如 "./assets/image-1699999999.png" 或绝对路径。
+func handleFSSaveAsset(params json.RawMessage) (interface{}, *RPCError) {
+	var p saveAssetParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "参数解析失败"}
+	}
+	docPath := strings.TrimSpace(p.DocPath)
+	if docPath == "" {
+		return nil, &RPCError{Code: -32602, Message: "docPath 不能为空"}
+	}
+	validDocPath, err := validatePath(docPath)
+	if err != nil {
+		return nil, &RPCError{Code: -32602, Message: "无效的文档路径: " + err.Error()}
+	}
+
+	b64Data := strings.TrimSpace(p.Base64)
+	if b64Data == "" {
+		return nil, &RPCError{Code: -32602, Message: "图片数据为空"}
+	}
+
+	// 支持剥离 data:image/png;base64, 前缀
+	ext := ".png"
+	if idx := strings.Index(b64Data, ","); idx != -1 {
+		prefix := b64Data[:idx]
+		if strings.Contains(prefix, "image/jpeg") || strings.Contains(prefix, "image/jpg") {
+			ext = ".jpg"
+		} else if strings.Contains(prefix, "image/gif") {
+			ext = ".gif"
+		} else if strings.Contains(prefix, "image/webp") {
+			ext = ".webp"
+		} else if strings.Contains(prefix, "image/svg+xml") {
+			ext = ".svg"
+		}
+		b64Data = b64Data[idx+1:]
+	}
+
+	rawBytes, err := base64.StdEncoding.DecodeString(b64Data)
+	if err != nil {
+		return nil, &RPCError{Code: -32602, Message: "图片 base64 解码失败: " + err.Error()}
+	}
+
+	if len(rawBytes) > maxFileBytes {
+		return nil, &RPCError{Code: -32000, Message: "图片数据过大"}
+	}
+
+	// 确认目标存放目录为 doc 所在的同级 assets 目录
+	docDir := filepath.Dir(validDocPath)
+	assetsDir := filepath.Join(docDir, "assets")
+	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
+		return nil, &RPCError{Code: -32000, Message: "创建 assets 目录失败: " + err.Error()}
+	}
+
+	name := strings.TrimSpace(p.Filename)
+	if name != "" {
+		name = sanitizeName(name)
+		if filepath.Ext(name) == "" {
+			name += ext
+		}
+	} else {
+		name = fmt.Sprintf("image-%d%s", time.Now().UnixMilli(), ext)
+	}
+
+	targetPath := filepath.Join(assetsDir, name)
+	// 若重名则累加后缀
+	if _, err := os.Stat(targetPath); err == nil {
+		name = fmt.Sprintf("image-%d-%d%s", time.Now().UnixMilli(), time.Now().Nanosecond()%1000, ext)
+		targetPath = filepath.Join(assetsDir, name)
+	}
+
+	if err := os.WriteFile(targetPath, rawBytes, 0o644); err != nil {
+		return nil, &RPCError{Code: -32000, Message: "写入图片文件失败: " + err.Error()}
+	}
+
+	relPath := "./assets/" + filepath.ToSlash(name)
+	return map[string]interface{}{
+		"relativePath": relPath,
+		"absolutePath": targetPath,
+		"filename":     name,
+		"size":         len(rawBytes),
+	}, nil
+}
+

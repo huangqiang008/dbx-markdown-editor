@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginID      = "com.huangqiang.mdeditor"
-	pluginVersion = "1.0.0"
+	pluginVersion = "2.0.0"
 )
 
 // JSON-RPC 2.0 over newline-delimited JSON（stdio-jsonl）
@@ -95,6 +95,26 @@ func dispatch(req Request) (interface{}, *RPCError) {
 		return handleFSBrowse(req.Params)
 	case "fs/readImage":
 		return handleFSReadImage(req.Params)
+	case "fs/saveAsset":
+		return handleFSSaveAsset(req.Params)
+	// 系统剪贴板里的图片（DBX 沙箱里浏览器 API 拿不到）
+	case "clipboard/readImage":
+		return handleClipboardReadImage(req.Params)
+	// iml-editor-lite 前端适配层需要的文件操作与配置目录
+	case "app/dataDir":
+		return handleDataDir(req.Params)
+	case "fs/readDir":
+		return handleFSReadDir(req.Params)
+	case "fs/mkdir":
+		return handleFSMkdir(req.Params)
+	case "fs/rename":
+		return handleFSRename(req.Params)
+	case "fs/copy":
+		return handleFSCopy(req.Params)
+	case "fs/delete":
+		return handleFSDelete(req.Params)
+	case "fs/writeBytes":
+		return handleFSWriteBytes(req.Params)
 	// 原生对话框（Windows PowerShell COM）
 	case "fs/pickFile":
 		return handlePickFile(req.Params)
@@ -102,6 +122,8 @@ func dispatch(req Request) (interface{}, *RPCError) {
 		return handlePickSaveFile(req.Params)
 	case "fs/pickDir":
 		return handlePickDir(req.Params)
+	case "export/pdf":
+		return handleExportPDF(req.Params)
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
